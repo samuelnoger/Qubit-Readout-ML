@@ -4,9 +4,7 @@ A small, self-contained project on **dispersive qubit readout**: deciding whethe
 
 This is a learning project, not a research contribution. It reproduces a known idea (neural readout classifiers can help when the qubit relaxes during measurement) on a simplified simulator, then looks at what happens when two multiplexed qubits interfere with each other.
 
-<img src="results/figures/sweep_t1.png" alt="Fidelity vs T1" width="400">
-<img src="results/figures/sweep_zeta.png" alt="Fidelity vs cross-dispersive shift" width="400">
-<img src="results/figures/sweep_leak.png" alt="Fidelity vs signal leakage" width="400">
+<img src="results/figures/sweep_t1.png" alt="Fidelity vs T1" width="400"><img src="results/figures/sweep_zeta.png" alt="Fidelity vs cross-dispersive shift" width="400"><img src="results/figures/sweep_leak.png" alt="Fidelity vs signal leakage" width="600">
 
 ---
 
@@ -26,17 +24,17 @@ Simulation happens in two stages (units: µs):
 1. **Qubit trajectories.** QuTiP `mcsolve` runs quantum-jump trajectories with a $T_1$ collapse operator. Each trajectory is excited until a random jump time and ground afterwards. Ground-state preparations never jump.
 2. **Cavity response.** Given the qubit trajectory $s(t) = \pm 1$, the cavity field obeys
 
-$$\frac{d\alpha}{dt} = -i\varepsilon - \left(\frac{\kappa}{2} + i\chi s(t)\right) \alpha$$
+$$\frac{d\alpha}{dt}=-i\varepsilon-\left(\frac{\kappa}{2}+i\chi s(t)\right)\alpha$$
 
 which is solved exactly on each time step because $s(t)$ is piecewise constant. Gaussian noise of standard deviation $\sigma$ is added to each $(I, Q)$ sample.
 
 **Two qubits.** The qubits decay independently. Each resonator $i \in \{1, 2\}$ obeys
 
-$$\frac{d\alpha_i}{dt} = -i\varepsilon - \left(\frac{\kappa}{2} + i\left(\chi s_i(t) + \zeta s_j(t)\right)\right) \alpha_i, \qquad j \neq i,$$
+$$\frac{d\alpha_i}{dt}=-i\varepsilon-\left(\frac{\kappa}{2}+i\left(\chi s_i(t)+\zeta s_j(t)\right)\right)\alpha_i,\quad j\neq i$$
 
 and the measured channels mix linearly,
 
-$$m_i = \alpha_i + \eta\, \alpha_j + \text{noise}.$$
+$$m_i=\alpha_i+\eta\alpha_j+\text{noise}$$
 
 - $\zeta$ (`--zeta`) is a **cross-dispersive shift**: the other qubit's state changes this resonator's response. It acts nonlinearly on the records.
 - $\eta$ (`--leak`) is **linear signal leakage** between channels. A classifier that sees both channels can in principle subtract it.
@@ -91,70 +89,8 @@ The independent methods lose 4 to 6 points by $\eta = 0.5$. Joint LDA recovers m
 - Sweeps use 3 seeds. Gaps below roughly half a point should not be over-interpreted.
 - There is no Bayes-optimal reference yet, so it is unknown how close any classifier is to the best possible one.
 
+## Development Methodology
+
+The core CNN architecture, QuTiP simulation boilerplate, and classical baselines were scaffolded with the assistance of AI coding tools. Primary technical contributions focus on structuring the semi-classical readout physics, designing the simulation to isolate spatial multi-qubit crosstalk and temporal $T_1$ decay, optimizing hardware utilization for Apple Silicon (MPS), and benchmarking the joint neural architecture against standard independent filters and joint linear discriminants.
+
 ## Project structure
-
-```
-sim/engine.py              QuTiP jump trajectories + cavity response + noise (1 qubit)
-sim/engine_2q.py           Two-qubit readout with cross-dispersive shift and linear leakage
-model/readout_model.py     Configurable ReadoutCNN and ReadoutGRU (one logit per qubit)
-data/generate_data.py      Dataset generation (train/val/test, independent seeds)
-train/arguments.py         All command-line arguments (physics, data, training)
-train/train.py             Training, validation, and comparison with the baselines
-baselines_2.py             Independent vs. joint classical classifiers, assignment fidelity
-plot_records.py            Raw records, class-mean records, matched-filter histograms
-sweep.py                   T1, cross-dispersive and leakage sweeps with several seeds
-generate.sh / run_train.sh Convenience scripts with the default settings
-results/figures, results/sweeps   generated plots and sweep data
-```
-
-## Quick start
-
-```bash
-pip install qutip scikit-learn torch numpy matplotlib tqdm     # QuTiP >= 5
-
-python -m sim.engine                                   # simulator sanity checks (1 qubit)
-python -m sim.engine_2q                                # simulator sanity checks (2 qubits)
-python -m data.generate_data --n-qubits 1 --sigma 1.0  # simulate a 1-qubit dataset
-python -m train.train --epochs 20 --arch cnn           # train the CNN and evaluate the baselines
-```
-
-Two-qubit data and the sweeps:
-
-```bash
-python -m data.generate_data --n-qubits 2 --sigma 1.0 --zeta 2.0 --leak 0.2 --n-train 5000
-python sweep.py --sweep t1       # single qubit, vary T1
-python sweep.py --sweep zeta     # two qubits, vary the cross-dispersive shift
-python sweep.py --sweep leak     # two qubits, vary the linear leakage
-python sweep.py --sweep zeta --replot   # redraw from saved results without rerunning
-```
-
-Training uses Apple Silicon (MPS) when `--device mps` is set and falls back to CPU if it is unavailable.
-
-## Sanity checks built into the simulators
-
-`python -m sim.engine` verifies both stages independently:
-
-1. The mean of many excited-qubit trajectories matches $\exp(-t/T_1)$ up to shot noise.
-2. The noise-free cavity field converges to the analytic steady state $\frac{-i\varepsilon}{\kappa/2 + i\chi}$.
-
-`python -m sim.engine_2q` also checks that with $\zeta = 0$ resonator 1 reproduces the single-qubit response, that the two qubits decay independently, and that the steady states with $\zeta \neq 0$ match the analytic values.
-
-## Possible extensions
-
-- Bayes-optimal classifier (marginalizing over the decay time) as a performance ceiling.
-- An MLP baseline, a sweep with both $\zeta$ and $\eta$ nonzero, and a noise sweep.
-- Non-Gaussian noise, where linear filters tuned for white noise should struggle.
-- Superposition and entangled input states, which turn readout into state tomography.
-
-## Earlier version of this repository
-
-The project began as a parameter-fitting and pulse-control pipeline for a driven Jaynes-Cummings system using a neural surrogate. It turned out that a small, well-modeled system gives a neural network little to do beyond what a classical solver already does, so I moved to a problem where the learned model addresses something a linear method cannot. The earlier code is kept in `old_jc_control/`.
-
-## References
-
-- **PyTorch** and **Scikit-Learn** for the neural networks, baselines, and training loops.
-- **QuTiP** for the quantum-jump simulation. If you build on the QuTiP parts of this project, please cite:
-  > J. R. Johansson, P. D. Nation, and F. Nori, "QuTiP 2: A Python framework for the dynamics of open quantum systems," Comput. Phys. Commun. **184**, 1234 (2013).
-  >
-  > N. Lambert et al., "QuTiP 5: The Quantum Toolbox in Python," arXiv:2412.04705 (2024).
-- **NumPy & Matplotlib** for data handling and plotting.
